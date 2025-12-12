@@ -10,31 +10,36 @@ import TransactionHistory from './components/TransactionHistory';
 function App() {
   const [walletData, setWalletData] = useState(null);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-[#0d1117] dark:to-[#010409]">
-      <div className="border-b border-gray-200 dark:border-[#30363d] bg-white dark:bg-[#161b22]">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-black dark:text-white">SimpleDEX</h1>
-              </div>
+return (
+  <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-[#0d1117] dark:to-[#010409]">
+    {/* Sticky Header */}
+    <div className="sticky top-0 z-50 bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-[#30363d]">
+      <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="px-3 py-1.5 bg-green-50 dark:bg-green-950/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium">
-                Sepolia
-              </div>
-              <ThemeToggle />
+            <div>
+              <h1 className="text-2xl font-bold text-black dark:text-white">SimpleDEX</h1>
+            </div>  
+          </div>
+
+          {/* Right side - Sepolia + Theme */}
+          <div className="flex items-center gap-3">
+            <div className="px-3 py-1.5 bg-green-50 dark:bg-green-950/20 text-green-700 dark:text-green-400 rounded-lg text-xs font-medium">
+              Sepolia
             </div>
+            <ThemeToggle />
           </div>
         </div>
       </div>
+    </div>
 
+    {/* Rest of content */}
       <div className="max-w-lg mx-auto px-4 py-8">
         <WalletConnect onConnect={setWalletData} />
 
