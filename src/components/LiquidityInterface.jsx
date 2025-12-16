@@ -4,7 +4,7 @@ import { CONTRACTS } from '../contracts/addresses';
 import { ABIS } from '../contracts/abis';
 import Spinner from './Spinner';
 
-export default function LiquidityInterface({ signer }) {
+export default function LiquidityInterface({ signer,onTxSuccess }) {
   const [amountA, setAmountA] = useState('');
   const [amountB, setAmountB] = useState('');
   const [adding, setAdding] = useState(false);
@@ -35,6 +35,13 @@ export default function LiquidityInterface({ signer }) {
       setStatus('Adding liquidity...');
       const addLiqTx = await dex.addLiquidity(amountAWei, amountBWei);
       await addLiqTx.wait();
+      //trigger parent update 
+      if(onTxSuccess){
+        console.log("liq succeedd, triggering parent");
+        onTxSuccess();
+      }
+
+      
 
       setStatus('✓ Liquidity added!');
       setAmountA('');

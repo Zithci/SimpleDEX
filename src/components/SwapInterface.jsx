@@ -1,31 +1,78 @@
-import { useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Contract, parseEther, formatEther } from 'ethers';
 import { CONTRACTS } from '../contracts/addresses';
 import { ABIS } from '../contracts/abis';
 import Spinner from './Spinner';
 
-export default function SwapInterface({ signer }) {
+export default function SwapInterface({ signer, onTxSuccess }) {
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('0');
   const [swapping, setSwapping] = useState(false);
   const [status, setStatus] = useState('');
   const [swapDirection, setSwapDirection] = useState(true);
+  const [userBalance, setUserBalance] = useState('0');
 
-  const calculateSwapOutput = async () => {
-    if (!amountIn || !signer) return;
+  // useEffect withdraw balance every time wallet change
+  useEffect(() =>{
+    const fetchBalance = async() => {
+      if(!signer) return;
+      try {
+        const tokenAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
+        const tokenContract = new Contract(tokenAddress, ABIS.TokenA , signer);
+        const address = await signer.getAddress(); //get contract signer adderss
 
-    try {
-      const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
-      const amountInWei = parseEther(amountIn);
-      
-      const tokenInAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
-      const output = await dex.getSwapOutput(tokenInAddress, amountInWei);
-      setAmountOut(formatEther(output));
-    } catch (err) {
-      console.error('Calculate error:', err);
-      setAmountOut('0');
+        const bal = await tokenContract.balanceOf(address);
+      //save in ether format(string),misal "100.0"  
+      setUserBalance(formatEther(bal));
+      }catch(err){
+        console.error("failed to withdraw", err);
+      }
+    };
+    fetchBalance();
+  }, [signer, swapDirection,onTxSuccess]) //update if swap direct changed/ newest tx
+
+const calculateSwapOutput = useCallback(async () => {
+  if (!amountIn || !signer) return;
+
+  try {
+    const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
+    const amountInWei = parseEther(amountIn);
+    
+    const tokenInAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
+    const output = await dex.getSwapOutput(tokenInAddress, amountInWei);
+    setAmountOut(formatEther(output));
+
+  } catch (err) {
+    console.error('Calculate error:', err);
+    setAmountOut('0');
+  }
+}, [amountIn, signer, swapDirection]); // <-- INI PENTING
+  
+  // percent button 
+  const handlePercentage = (percent) => {
+    console.log("did the button show any sign?")
+    if(!userBalance) return;
+
+    if(percent === 100){
+      setAmountIn(userBalance)
+    }else{
+      const value =  (parseFloat(userBalance)* percent) / 100;
+      setAmountIn(value.toFixed(4)) // fixed decimal 4 digits   
     }
-  };
+    setTimeout(() =>calculateSwapOutput(),100);
+  };  
+
+
+
+//automated triggger
+    useEffect(() =>{
+      const timer = setTimeout(() => {
+        if(amountIn) calculateSwapOutput();
+      }, 500);
+      return() =>clearTimeout(timer);
+      },[amountIn, calculateSwapOutput]);
+    
+
 
   const handleSwap = async () => {
     if (!amountIn || !signer) return;
@@ -36,6 +83,7 @@ export default function SwapInterface({ signer }) {
     try {
       const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
       
+      //  check reserves
       const [reserveA, reserveB] = await dex.getReserves();
       if (reserveA.toString() === '0' || reserveB.toString() === '0') {
         setStatus('✗ Pool empty - add liquidity first');
@@ -57,6 +105,11 @@ export default function SwapInterface({ signer }) {
       const swapTx = await dex.swap(tokenInAddress, amountInWei);
       await swapTx.wait();
 
+      // trigger parents update
+      if(onTxSuccess) {
+        console.log("swap succeed, triggering parent.")
+        onTxSuccess();
+      }
       setStatus('✓ Swap successful!');
       setAmountIn('');
       setAmountOut('0');
@@ -115,6 +168,19 @@ export default function SwapInterface({ signer }) {
         <div className="bg-gray-50 dark:bg-[#0d1117] rounded-2xl p-5 border-2 border-transparent focus-within:border-blue-200 dark:focus-within:border-blue-900/50 transition-all hover:bg-gray-100 dark:hover:bg-[#010409]">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">You Pay</span>
+            <div className="flex justify-end gap-2 mb-2">
+      {[25, 50, 75, 100].map((percent) => (
+        <button
+          key={percent}
+          onClick={() => handlePercentage(percent)}
+          disabled={swapping || !userBalance || userBalance === '0'}
+          className="px-2 py-1 text-xs font-medium rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
+        >
+          {percent === 100 ? 'Max' : `${percent}%`}
+        </button>
+      ))}
+   </div>
+
             <div className={`flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r ${fromToken.gradient} shadow-lg`}>
               <div className="w-6 h-6 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
                 <span className="text-white text-xs font-bold">{fromToken.letter}</span>
@@ -127,7 +193,7 @@ export default function SwapInterface({ signer }) {
             value={amountIn}
             onChange={(e) => {
               setAmountIn(e.target.value);
-              calculateSwapOutput();
+
             }}
             placeholder="0.0"
             className="bg-transparent text-4xl font-bold outline-none w-full text-black dark:text-white placeholder-gray-300 dark:placeholder-gray-600"
@@ -181,7 +247,7 @@ export default function SwapInterface({ signer }) {
             <span className="font-bold text-black dark:text-white">
               1 {fromToken.name} = {(Number(amountOut) / Number(amountIn)).toFixed(4)} {toToken.name}
             </span>
-          </div>
+          </div>  
           <div className="flex items-center justify-between text-xs">
             <span className="text-gray-500 dark:text-gray-500">Price Impact</span>
             <span className={`font-semibold ${Number(priceImpact) > 5 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
