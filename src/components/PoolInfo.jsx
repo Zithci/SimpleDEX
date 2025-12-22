@@ -8,13 +8,22 @@ export default function PoolInfo({ provider }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  useEffect(()=> {
+    if(!provider) return; // just return,state already default
+
+    //only fetch if the provider exist
+    const fetchReserves = async() => {
+      setLoading(true);
+      // fetching logic
+      setLoading(false);
+    }  ;
+    fetchReserves();
+  },[provider]);
+  
   useEffect(() => {
     if (!provider) {
-      setReserves({ tokenA: '0', tokenB: '0' });
-      setLoading(false);
-      return;
+      setReserves
     }
-
     const loadReserves = async () => {
       try {
         setError(null);
@@ -41,6 +50,7 @@ export default function PoolInfo({ provider }) {
     const interval = setInterval(loadReserves, 10000);
     return () => clearInterval(interval);
   }, [provider]);
+
 
   if (error) {
     return (

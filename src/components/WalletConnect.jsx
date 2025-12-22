@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect,useCallback } from 'react';
 import { BrowserProvider } from 'ethers';
 import { SEPOLIA_CHAIN_ID } from '../contracts/addresses';
 import Spinner from './Spinner';
@@ -8,60 +8,26 @@ export default function WalletConnect({ onConnect }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [showWallets, setShowWallets] = useState(false);
   const [error, setError] = useState(null);
+  
 
-  // Listen for account changes
-  useEffect(() => {
-    if (window.ethereum) {
-      const handleAccountsChanged = (accounts) => {
-        if (accounts.length === 0) {
-          // User disconnected from wallet
-          setAccount(null);
-          onConnect(null);
-        } else if (accounts[0] !== account) {
-          // User switched accounts
-          setAccount(accounts[0]);
-          connectWallet('metamask')
-        }
-      };
-
-      const handleChainChanged = () => {
-        // Reload on chain change
-        window.location.reload();
-      };
-
-      window.ethereum.on('accountsChanged', handleAccountsChanged);
-      window.ethereum.on('chainChanged', handleChainChanged);
-
-      return () => {
-        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-        window.ethereum.removeListener('chainChanged', handleChainChanged);
-      };
-    }
-  }, [account, onConnect]);
-
-  const connectWallet = async (walletType) => {
+    const connectWallet = useCallback(async (walletType) => {
     setIsConnecting(true);
     setError(null);
+    
 
-    try {
+       try {
       let provider;
 
-      // Find the right provider
       if (window.ethereum?.providers) {
-        // Multiple wallets installed
-        console.log('Multiple providers detected:', window.ethereum.providers);
-        
         if (walletType === 'coinbase') {
           provider = window.ethereum.providers.find(p => p.isCoinbaseWallet);
           if (!provider) {
             throw new Error('Coinbase Wallet extension not found. Make sure it\'s installed and enabled.');
           }
         } else {
-          // MetaMask or default
           provider = window.ethereum.providers.find(p => p.isMetaMask) || window.ethereum;
         }
       } else if (window.ethereum) {
-        // Single wallet
         if (walletType === 'coinbase' && !window.ethereum.isCoinbaseWallet) {
           throw new Error('Coinbase Wallet not detected. Using default wallet instead.');
         }
@@ -70,12 +36,7 @@ export default function WalletConnect({ onConnect }) {
         throw new Error('No wallet detected! Please install MetaMask or Coinbase Wallet.');
       }
 
-      console.log('Using provider:', {
-        isMetaMask: provider.isMetaMask,
-        isCoinbaseWallet: provider.isCoinbaseWallet
-      });
-
-      const accounts = await provider.request({
+       await provider.request({
         method: 'eth_requestAccounts'
       });
 
@@ -102,24 +63,42 @@ export default function WalletConnect({ onConnect }) {
     } finally {
       setIsConnecting(false);
     }
-  };
+  },[onConnect]);
+
+  
+
+  useEffect(() => {
+    if (window.ethereum) {
+      const handleAccountsChanged = (accounts) => {
+        if (accounts.length === 0) {
+          setAccount(null);
+          onConnect(null);
+        } else if (accounts[0] !== account) {
+          setAccount(accounts[0]);
+          connectWallet('metamask');
+        }
+      };
+
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+
+      return () => {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      };
+    }
+  }, [account, onConnect,connectWallet]);
+
+
 
   const disconnectWallet = async () => {
     try {
-      // Clear state first
       setAccount(null);
       onConnect(null);
-
-      // For MetaMask/Coinbase: Request disconnect
-      if (window.ethereum) {
-        // Note: Most wallets don't support programmatic disconnect
-        // User must disconnect manually from wallet extension
-        // But we clear our app state
-        console.log('Disconnected from app. To fully disconnect, close wallet extension.');
-      }
-
-      // Optional: Reload page to clear all state
-      // window.location.reload();
     } catch (err) {
       console.error('Disconnect error:', err);
     }
@@ -184,7 +163,6 @@ export default function WalletConnect({ onConnect }) {
         )}
 
         <div className="space-y-3">
-          {/* MetaMask */}
           <button
             onClick={() => connectWallet('metamask')}
             disabled={isConnecting}
@@ -200,7 +178,6 @@ export default function WalletConnect({ onConnect }) {
             {isConnecting && <Spinner size="sm" />}
           </button>
 
-          {/* Coinbase Wallet */}
           <button
             onClick={() => connectWallet('coinbase')}
             disabled={isConnecting}
@@ -216,7 +193,6 @@ export default function WalletConnect({ onConnect }) {
             {isConnecting && <Spinner size="sm" />}
           </button>
 
-          {/* Mobile Wallet */}
           <button
             onClick={() => setError('WalletConnect QR coming soon! Use MetaMask Mobile for now.')}
             disabled={isConnecting}

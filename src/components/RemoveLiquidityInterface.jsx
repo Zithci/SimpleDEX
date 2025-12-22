@@ -84,7 +84,6 @@ export default function RemoveLiquidityInterface({ signer, onTxSuccess }) {
       await removeTx.wait();
 
       if (onTxSuccess) {
-        console.log('Remove liquidity success, triggering parent.');
         onTxSuccess();
       }
 

@@ -11,22 +11,19 @@ import RemoveLiquidityInterface from './components/RemoveLiquidityInterface';
 
 function App() {
   const [walletData, setWalletData] = useState(null);
-  console.log("Re-Render App");
+
   
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [activeTab, setActiveTab] = useState('swap');
 
   const handleTxSuccess = useCallback(() => {
-    console.log("tx succeed");
     setRefreshTrigger(prev => prev + 1);
 
     setTimeout(() => {
-      console.log("5 sec passed");
       setRefreshTrigger(prev => prev + 1);
     }, 5000);
 
     setTimeout(() => {
-      console.log("final 5 sec");
       setRefreshTrigger(prev => prev + 1);
     }, 10000);
   }, []);
@@ -62,8 +59,7 @@ function App() {
 
 {walletData ? (
   <div className="space-y-4">
-    {/* Balance & Pool tetep di atas - always visible */}
-    <TokenBalances 
+5    <TokenBalances 
       signer={walletData.signer}
       refreshTrigger={refreshTrigger}
     />
@@ -97,8 +93,8 @@ function App() {
       </button>
     </div>
 
-    {/* CONDITIONAL RENDERING - tampilkan component sesuai tab aktif */}
-    {activeTab === 'swap' && ( // kalo tab = 'swap', render SwapInterface
+    {activeTab === 'swap' && ( 
+
       <SwapInterface 
         signer={walletData.signer}
         onTxSuccess={handleTxSuccess}

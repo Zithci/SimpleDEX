@@ -4,75 +4,96 @@ import { CONTRACTS } from '../contracts/addresses';
 import { ABIS } from '../contracts/abis';
 import Spinner from './Spinner';
 
+
 export default function SwapInterface({ signer, onTxSuccess }) {
+  
+  // --- STATE MANAGEMENT ---
   const [amountIn, setAmountIn] = useState('');
   const [amountOut, setAmountOut] = useState('0');
   const [swapping, setSwapping] = useState(false);
   const [status, setStatus] = useState('');
-  const [swapDirection, setSwapDirection] = useState(true);
+  const [swapDirection, setSwapDirection] = useState(true); // true = TokenA -> TokenB
   const [userBalance, setUserBalance] = useState('0');
 
-  // useEffect withdraw balance every time wallet change
-  useEffect(() =>{
-    const fetchBalance = async() => {
-      if(!signer) return;
+  /* =======================================================================
+     CORE LOGIC & CALCULATIONS
+     ======================================================================= */
+
+  /**
+   * Fetches the estimated output amount (Quote) from the DEX.
+   * Wrapped in useCallback to prevent infinite loops in useEffect.
+   */
+  const calculateSwapOutput = useCallback(async () => {
+    if (!amountIn || !signer) return;
+
+    try {
+      const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
+      const amountInWei = parseEther(amountIn);
+      const tokenInAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
+      
+      const output = await dex.getSwapOutput(tokenInAddress, amountInWei);
+      setAmountOut(formatEther(output));
+
+    } catch (err) {
+      // Silent fail is okay here, usually means amount is 0 or invalid
+      console.error('Calculate error:', err);
+      setAmountOut('0');
+    }
+  }, [amountIn, signer, swapDirection]);
+
+
+  /* =======================================================================
+     SIDE EFFECTS (LISTENERS)
+     ======================================================================= */
+
+  // Effect: Sync User Balance
+  // Triggers when wallet connects, swap direction changes, or after a successful TX.
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (!signer) return;
       try {
         const tokenAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
-        const tokenContract = new Contract(tokenAddress, ABIS.TokenA , signer);
-        const address = await signer.getAddress(); //get contract signer adderss
+        const tokenContract = new Contract(tokenAddress, ABIS.TokenA, signer);
+        const address = await signer.getAddress();
 
         const bal = await tokenContract.balanceOf(address);
-      //save in ether format(string),misal "100.0"  
-      setUserBalance(formatEther(bal));
-      }catch(err){
-        console.error("failed to withdraw", err);
+        setUserBalance(formatEther(bal)); // Store as string for display
+      } catch (err) {
+        console.error("Failed to fetch balance:", err);
       }
     };
     fetchBalance();
-  }, [signer, swapDirection,onTxSuccess]) //update if swap direct changed/ newest tx
+  }, [signer, swapDirection, onTxSuccess]);
 
-const calculateSwapOutput = useCallback(async () => {
-  if (!amountIn || !signer) return;
+  // Effect: Auto-Quote Debounce
+  // Delays calculation by 500ms to prevent spamming RPC while typing.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (amountIn) calculateSwapOutput();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [amountIn, calculateSwapOutput]);
 
-  try {
-    const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
-    const amountInWei = parseEther(amountIn);
-    
-    const tokenInAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
-    const output = await dex.getSwapOutput(tokenInAddress, amountInWei);
-    setAmountOut(formatEther(output));
 
-  } catch (err) {
-    console.error('Calculate error:', err);
-    setAmountOut('0');
-  }
-}, [amountIn, signer, swapDirection]); // <-- INI PENTING
-  
-  // percent button 
+  /* =======================================================================
+     EVENT HANDLERS (INTERACTIONS)
+     ======================================================================= */
+
   const handlePercentage = (percent) => {
-    console.log("did the button show any sign?")
-    if(!userBalance) return;
+    if (!userBalance) return;
+    let value ;
+    if (percent === 100) {
+      value = parseFloat(userBalance).toFixed(6);
+    } else {
+      const rawvalue  = (parseFloat(userBalance) * percent) /100;
+      value =parseFloat(rawvalue.toFixed(6)).toString();
 
-    if(percent === 100){
-      setAmountIn(userBalance)
-    }else{
-      const value =  (parseFloat(userBalance)* percent) / 100;
-      setAmountIn(value.toFixed(4)) // fixed decimal 4 digits   
+      value = parseFloat(value).toString();
     }
-    setTimeout(() =>calculateSwapOutput(),100);
-  };  
-
-
-
-//automated triggger
-    useEffect(() =>{
-      const timer = setTimeout(() => {
-        if(amountIn) calculateSwapOutput();
-      }, 500);
-      return() =>clearTimeout(timer);
-      },[amountIn, calculateSwapOutput]);
-    
-
+    setAmountIn(value);
+    setTimeout(() => calculateSwapOutput(), 100);    
+   
+  };
 
   const handleSwap = async () => {
     if (!amountIn || !signer) return;
@@ -82,49 +103,46 @@ const calculateSwapOutput = useCallback(async () => {
 
     try {
       const dex = new Contract(CONTRACTS.SimpleDEX, ABIS.SimpleDEX, signer);
-      
-      //  check reserves
+
+      // 1. Validation: Prevent gas waste on empty pools
       const [reserveA, reserveB] = await dex.getReserves();
       if (reserveA.toString() === '0' || reserveB.toString() === '0') {
-        setStatus('✗ Pool empty - add liquidity first');
-        setSwapping(false);
-        setTimeout(() => setStatus(''), 4000);
-        return;
+        throw new Error('Pool is empty');
       }
 
       const tokenInAddress = swapDirection ? CONTRACTS.TokenA : CONTRACTS.TokenB;
       const tokenIn = new Contract(tokenInAddress, ABIS.TokenA, signer);
-      
       const amountInWei = parseEther(amountIn);
 
+      // 2. Approve Token Spending
       setStatus('Approving...');
       const approveTx = await tokenIn.approve(CONTRACTS.SimpleDEX, amountInWei);
-      await approveTx.wait();
+      await approveTx.wait(); // Critical: Wait for block confirmation
 
+      // 3. Execute Swap
       setStatus('Swapping...');
       const swapTx = await dex.swap(tokenInAddress, amountInWei);
-      await swapTx.wait();
+      await swapTx.wait(); // Critical: Wait for block confirmation
 
-      // trigger parents update
-      if(onTxSuccess) {
-        console.log("swap succeed, triggering parent.")
-        onTxSuccess();
-      }
+      // 4. Success Handling
+      if (onTxSuccess) onTxSuccess(); // Trigger parent refresh
+      
       setStatus('✓ Swap successful!');
       setAmountIn('');
       setAmountOut('0');
-
       setTimeout(() => setStatus(''), 3000);
+
     } catch (err) {
       console.error('Swap error:', err);
-      
+
+      // Sorting errors for better UX
       let errorMsg = '✗ Swap failed';
-      if (err.message.includes('Insufficient output')) {
-        errorMsg = '✗ Amount too small or pool empty';
-      } else if (err.message.includes('user rejected')) {
+      if (err.message === 'Pool is empty' || err.message.includes('Insufficient output')) {
+        errorMsg = '✗ Liquidity issue';
+      } else if (err.message.includes('user rejected') || err.code === 'ACTION_REJECTED') {
         errorMsg = '✗ Transaction rejected';
       }
-      
+
       setStatus(errorMsg);
       setTimeout(() => setStatus(''), 4000);
     } finally {
@@ -138,6 +156,11 @@ const calculateSwapOutput = useCallback(async () => {
     setAmountOut('0');
   };
 
+  /* =======================================================================
+     RENDER HELPERS & UI
+     ======================================================================= */
+  
+  // Dynamic Token Config
   const fromToken = swapDirection 
     ? { name: 'TKNA', color: 'blue', gradient: 'from-blue-500 to-blue-600', letter: 'A' } 
     : { name: 'TKNB', color: 'purple', gradient: 'from-purple-500 to-purple-600', letter: 'B' };
@@ -150,8 +173,19 @@ const calculateSwapOutput = useCallback(async () => {
     ? ((1 - (Number(amountOut) / Number(amountIn))) * 100).toFixed(2)
     : '0';
 
-  return (
+    
+
+    // guard logic(preventing nan display)
+    const numericAccount  = parseFloat(amountIn || "0");
+    const numericBalance =  parseFloat(userBalance || "0");
+    const isInsufficient = numericAccount  > numericBalance;
+
+
+
+return (
     <div className="bg-gradient-to-br from-white to-gray-50 dark:from-[#161b22] dark:to-[#0d1117] border border-gray-200 dark:border-[#30363d] rounded-3xl p-6 shadow-xl">
+      
+      {/* --- HEADER --- */}
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-xl font-bold text-black dark:text-white">Swap Tokens</h3>
         <button
@@ -164,44 +198,69 @@ const calculateSwapOutput = useCallback(async () => {
       </div>
       
       <div className="space-y-1">
-        {/* From */}
-        <div className="bg-gray-50 dark:bg-[#0d1117] rounded-2xl p-5 border-2 border-transparent focus-within:border-blue-200 dark:focus-within:border-blue-900/50 transition-all hover:bg-gray-100 dark:hover:bg-[#010409]">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">You Pay</span>
-            <div className="flex justify-end gap-2 mb-2">
-      {[25, 50, 75, 100].map((percent) => (
-        <button
-          key={percent}
-          onClick={() => handlePercentage(percent)}
-          disabled={swapping || !userBalance || userBalance === '0'}
-          className="px-2 py-1 text-xs font-medium rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
-        >
-          {percent === 100 ? 'Max' : `${percent}%`}
-        </button>
-      ))}
-   </div>
+        
+        {/* --- INPUT: FROM TOKEN --- */}
+        <div className={`bg-gray-50 dark:bg-[#0d1117] rounded-2xl p-5 border-2 transition-all hover:bg-gray-100 dark:hover:bg-[#010409] 
+          ${isInsufficient 
+            ? 'border-red-500/50 focus-within:border-red-500' 
+            : 'border-transparent focus-within:border-blue-200 dark:focus-within:border-blue-900/50'
+          }`}>
+          
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+            <span className={`text-xs font-bold uppercase tracking-wide shrink-0 ${isInsufficient ? 'text-red-500' : 'text-gray-500'}`}>
+              {isInsufficient ? '⚠️ Insufficient Balance' : 'You Pay'}
+            </span>
 
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r ${fromToken.gradient} shadow-lg`}>
-              <div className="w-6 h-6 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
-                <span className="text-white text-xs font-bold">{fromToken.letter}</span>
+            <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+              {/* Percentage Buttons */}
+              <div className="flex flex-wrap gap-1 bg-gray-100/50 dark:bg-gray-800/40 p-1 rounded-lg">
+                {[25, 50, 75, 100].map((percent) => (
+                  <button
+                    key={percent}
+                    onClick={() => handlePercentage(percent)}
+                    disabled={swapping || !userBalance || userBalance === '0'}
+                    className="px-2 py-1 text-[10px] font-bold rounded-md bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-sm hover:bg-gray-50 dark:hover:bg-gray-600 transition-all"
+                  >
+                    {percent === 100 ? 'MAX' : `${percent}%`}
+                  </button>
+                ))}
               </div>
-              <span className="text-sm font-bold text-white">{fromToken.name}</span>
-            </div>
-          </div>
-          <input
-            type="number"
-            value={amountIn}
-            onChange={(e) => {
-              setAmountIn(e.target.value);
 
-            }}
-            placeholder="0.0"
-            className="bg-transparent text-4xl font-bold outline-none w-full text-black dark:text-white placeholder-gray-300 dark:placeholder-gray-600"
-            disabled={swapping}
-          />
+              {/* Token Badge (FIXED: ICON ADA) */}
+              <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-xl bg-gradient-to-r ${fromToken.gradient} shadow-md shrink-0`}>
+                <div className="w-5 h-5 bg-white/20 backdrop-blur-sm rounded flex items-center justify-center">
+                   <span className="text-white text-[10px] font-bold">{fromToken.letter}</span>
+                </div>
+                <span className="text-white text-[10px] font-bold">{fromToken.name}</span>
+              </div>
+            </div>
+          </div>  
+
+          {/* INPUT FIELD (FIXED: TRUNCATE & SIZE) */}
+          <div className="min-w-0 w-full">
+            <input
+              type="number"
+              value={amountIn}
+              placeholder="0.0"
+              disabled={swapping}
+              min="0"
+              step="any"
+              onChange={(e) => {
+                const val = e.target.value;
+                if (parseFloat(val) > parseFloat(userBalance)) {
+                  setAmountIn(userBalance);
+                } else {
+                  setAmountIn(val);
+                }
+              }}
+              className={`bg-transparent text-2xl md:text-4xl font-bold outline-none w-full min-w-0 truncate 
+                placeholder-gray-300 dark:placeholder-gray-600 
+                ${isInsufficient ? 'text-red-500' : 'text-black dark:text-white'}`}
+            />
+          </div>
         </div>
 
-        {/* Arrow Button */}
+        {/* --- ARROW DIVIDER --- */}
         <div className="flex justify-center -my-3 relative z-10">
           <button
             onClick={toggleDirection}
@@ -219,27 +278,31 @@ const calculateSwapOutput = useCallback(async () => {
           </button>
         </div>
 
-        {/* To */}
-        <div className="bg-gray-50 dark:bg-[#0d1117] rounded-2xl p-5 border-2 border-transparent hover:bg-gray-100 dark:hover:bg-[#010409] transition-all">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">You Receive</span>
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r ${toToken.gradient} shadow-lg`}>
-              <div className="w-6 h-6 bg-white/20 backdrop-blur-sm rounded-lg flex items-center justify-center">
-                <span className="text-white text-xs font-bold">{toToken.letter}</span>
+{/* --- INPUT: TO TOKEN --- */}
+        <div className="bg-gray-50 dark:bg-[#0d1117] rounded-2xl p-5 border-2 border-transparent hover:bg-gray-100 dark:hover:bg-[#010409] transition-all overflow-hidden">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide shrink-0">You Receive</span>
+          {/* Token Badge (FIX: Font size disamain jadi text-[10px]) */}
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-xl bg-gradient-to-r ${toToken.gradient} shadow-lg shrink-0`}>
+              <div className="w-5 h-5 bg-white/20 backdrop-blur-sm rounded flex items-center justify-center">
+                <span className="text-white text-[10px] font-bold">{toToken.letter}</span>
               </div>
-              <span className="text-sm font-bold text-white">{toToken.name}</span>
-            </div>
+              <span className="text-white text-[10px] font-bold">{toToken.name}</span>
+            </div>         
+            </div> 
+          {/* RECEIVE INPUT (FIXED: JEBOL) */}
+          <div className="flex items-center min-w-0 w-full">
+            <input
+              type="text"
+              value={amountOut}
+              readOnly
+              className="bg-transparent text-2xl md:text-4xl font-bold outline-none w-full min-w-0 truncate text-black dark:text-white"
+            />
           </div>
-          <input
-            type="text"
-            value={amountOut}
-            readOnly
-            className="bg-transparent text-4xl font-bold outline-none w-full text-black dark:text-white"
-          />
-        </div>
+        </div>  
       </div>
-
-      {/* Rate Info */}
+      
+      {/* --- INFO PANEL & ACTIONS --- */}
       {amountIn && amountOut !== '0' && (
         <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/10 dark:to-purple-950/10 rounded-xl border border-blue-100 dark:border-blue-900/30">
           <div className="flex items-center justify-between text-sm mb-2">
@@ -257,11 +320,14 @@ const calculateSwapOutput = useCallback(async () => {
         </div>
       )}
 
-      {/* Swap Button */}
       <button
         onClick={handleSwap}
-        disabled={!amountIn || swapping || !signer}
-        className="w-full mt-5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold text-lg py-5 rounded-2xl disabled:from-gray-300 dark:disabled:from-gray-800 disabled:to-gray-300 dark:disabled:to-gray-800 disabled:text-gray-500 dark:disabled:text-gray-600 disabled:cursor-not-allowed flex items-center justify-center gap-3 transition-all shadow-xl shadow-blue-500/20 hover:shadow-2xl hover:shadow-blue-500/40 hover:scale-[1.02]"
+        disabled={!amountIn || swapping || !signer || isInsufficient}
+        className={`w-full mt-5 font-bold text-lg py-5 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl 
+          ${isInsufficient || !amountIn || !signer
+            ? 'bg-gray-200 dark:bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-300 dark:border-gray-700'
+            : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-blue-500/20 hover:shadow-2xl hover:scale-[1.02]'
+          }`}
       >
         {swapping ? (
           <>
@@ -269,11 +335,11 @@ const calculateSwapOutput = useCallback(async () => {
             <span>{status}</span>
           </>
         ) : (
-          status || 'Swap Tokens'
+          isInsufficient ? `Insufficient ${fromToken.name} Balance` : (status || 'Swap Tokens')
         )}
       </button>
 
-      {/* Status */}
+      {/* Status Indicators */}
       {status && !swapping && (
         <div className={`mt-4 p-4 rounded-xl text-sm text-center font-semibold flex items-center justify-center gap-2 ${
           status.includes('✓') 
@@ -282,19 +348,8 @@ const calculateSwapOutput = useCallback(async () => {
             ? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900/30' 
             : 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900/30'
         }`}>
-          {status.includes('✓') && (
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-            </svg>
-          )}
-          {status.includes('✗') && (
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-            </svg>
-          )}
           <span>{status}</span>
         </div>
       )}
     </div>
-  );
-}
+  );}
